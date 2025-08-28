@@ -2,11 +2,21 @@ require('dotenv').config();
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2/promise"); // MySQL/MariaDB com Promises
+const path = require("path");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+// --- Serve arquivos estáticos (opcional) ---
+app.use('/error_docs', express.static(path.join(__dirname, 'error_docs')));
+
+// --- GET de teste ---
+app.get('/', (req, res) => {
+  res.send('🚀 API rodando! Use endpoints POST para /buscar_documentos, /listar_documentos e /baixar_documento');
+});
+
+// --- Variáveis de controle ---
 let ultimaBusca = null;
 let pastaSelecionada = null;
 
@@ -19,7 +29,7 @@ const dbConfig = {
   database: process.env.DB_NAME
 };
 
-// --- Helper para formatar data como DD/MM/YYYY ---
+// --- Helpers para mensagens e formatação ---
 function formatarData(date) {
   if (!date) return '';
   const dia = String(date.getDate()).padStart(2, '0');
@@ -28,23 +38,16 @@ function formatarData(date) {
   return `${dia}/${mes}/${ano}`;
 }
 
-// --- Helper para formatar mensagem de pastas ---
 function formatarMensagemPastas(pastas) {
-  const mesesPt = [
-    "Janeiro","Fevereiro","Março","Abril","Maio","Junho",
-    "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"
-  ];
-
+  const mesesPt = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
   let msg = `✅ *Foram encontrados boletos em ${pastas.length} meses:*\n\n`;
   pastas.forEach((p, i) => {
     let nomeMes = p.nome;
-    const parts = p.nome.split('-'); // ex: 2025-09
+    const parts = p.nome.split('-');
     if (parts.length === 2) {
       const [ano, mesNum] = parts;
       const mesIndex = parseInt(mesNum, 10) - 1;
-      if (mesIndex >= 0 && mesIndex < 12) {
-        nomeMes = `${mesesPt[mesIndex]} / ${ano}`;
-      }
+      if (mesIndex >= 0 && mesIndex < 12) nomeMes = `${mesesPt[mesIndex]} / ${ano}`;
     }
     msg += `*${i+1}* - ${nomeMes}\n`;
   });
@@ -52,60 +55,43 @@ function formatarMensagemPastas(pastas) {
   return msg;
 }
 
-// --- Helper para formatar mensagem de documentos ---
 function formatarMensagemDocumentos(pasta) {
-  const mesesPt = [
-    "Janeiro","Fevereiro","Março","Abril","Maio","Junho",
-    "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"
-  ];
-
+  const mesesPt = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
   let nomeMes = pasta.nome;
   const parts = pasta.nome.split('-');
   if (parts.length === 2) {
     const [ano, mesNum] = parts;
     const mesIndex = parseInt(mesNum, 10) - 1;
-    if (mesIndex >= 0 && mesIndex < 12) {
-      nomeMes = `${mesesPt[mesIndex]} / ${ano}`;
-    }
+    if (mesIndex >= 0 && mesIndex < 12) nomeMes = `${mesesPt[mesIndex]} / ${ano}`;
   }
-
   let msg = `📁 *Mês escolhido: ${nomeMes}*\n`;
   msg += `✅ *Encontrados ${pasta.documentos.length} boleto(s):*\n\n`;
   pasta.documentos.forEach((doc, i) => {
-    const nomeEmpresa = doc.cliente;
-    const dataVenc = doc.data_vencimento;
-    msg += `*${i+1}* - ${nomeEmpresa} (${formatarData(new Date(dataVenc))})\n`;
+    msg += `*${i+1}* - ${doc.cliente} (${formatarData(new Date(doc.data_vencimento))})\n`;
   });
   msg += "\n💾 *Escolha qual boleto deseja fazer o download:*";
   return msg;
 }
 
-// --- Helper para formatar mensagem de download ---
 function formatarMensagemDownload(doc) {
-  const nomeEmpresa = doc.cliente;
-  const dataVenc = doc.data_vencimento;
-  return `📄 *Boleto encontrado!*\n\n*Nome:* ${nomeEmpresa} (${formatarData(new Date(dataVenc))})\n*Link:* ${doc.url_boleto}\n\n🔗 *Clique no link para baixar*`;
+  return `📄 *Boleto encontrado!*\n\n*Nome:* ${doc.cliente} (${formatarData(new Date(doc.data_vencimento))})\n*Link:* ${doc.url_boleto}\n\n🔗 *Clique no link para baixar*`;
 }
 
-// --- Endpoints ---
+// --- Endpoints POST ---
 app.post('/buscar_documentos', async (req, res) => {
   try {
     const query = (req.body.cnpj || req.body.nota_fiscal || "").toString();
     if (!query) return res.json({ message: "❌ CNPJ ou nota_fiscal não informados." });
 
     const connection = await mysql.createConnection(dbConfig);
-
-    // --- Consulta no MariaDB ---
     const [rows] = await connection.execute(
       `SELECT * FROM boletos WHERE cnpj LIKE ? OR nota_fiscal LIKE ?`,
       [`%${query}%`, `%${query}%`]
     );
-
     await connection.end();
 
     if (!rows.length) return res.json({ message: "❌ Nenhum documento encontrado." });
 
-    // Agrupa por mês/ano
     const pastasMap = {};
     rows.forEach(r => {
       const data = new Date(r.data_vencimento);
@@ -120,7 +106,6 @@ app.post('/buscar_documentos', async (req, res) => {
 
     ultimaBusca = { pastas };
     res.json({ message: formatarMensagemPastas(pastas) });
-
   } catch (err) {
     res.json({ message: `❌ Erro interno: ${err.message}` });
   }
@@ -139,6 +124,6 @@ app.post('/baixar_documento', (req, res) => {
   res.json({ message: formatarMensagemDownload(doc) });
 });
 
-// --- Start server ---
+// --- Start server usando porta do provedor ---
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 API rodando em http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`🚀 API rodando na porta ${PORT}`));
